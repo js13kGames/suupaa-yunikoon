@@ -1,0 +1,1955 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>SUPER UNICORN</title>
+<style>
+    html, body { margin: 0; padding: 0; overflow: hidden; background: #05050a; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+
+    /* for the next jam I need better text support because this is terrible..... */
+    #a, #b { position: absolute; left: 10px; color: #fff; font-family: monospace; font-size: 13px; z-index: 1; pointer-events: none; }
+    #a { top: 10px; }
+    #b { top: 30px; font-size: 15px; }
+    #d, #e { position: absolute; color: #fff; font-family: monospace; font-weight: bold; z-index: 1; pointer-events: none; text-shadow: 0 2px 0 #000, 0 0 10px #000a; }
+    #d { top: 16px; left: 50%; transform: translateX(-50%); font-size: 56px; }
+    #e { top: 20px; right: 24px; font-size: 40px; color: #ffe14d; }
+    #f { position: absolute; top: 66px; right: 24px; font-size: 16px; font-family: monospace; font-weight: bold; color: rgba(255,255,255,0.55); z-index: 1; pointer-events: none; text-shadow: 0 0 6px #000; }
+    #g { position: absolute; top: 42%; left: 50%; transform: translateX(-50%); font-size: 34px; font-family: monospace; font-weight: bold; color: #f3f3f3; z-index: 1; pointer-events: none; text-shadow: 0 2px 0 #000, 0 0 12px #000; text-align: center; }
+    #h { position: absolute; top: 110px; left: 50%; transform: translateX(-50%); font-size: 26px; font-family: monospace; font-weight: bold; color: #ffe14d; z-index: 1; pointer-events: none; text-shadow: 0 2px 0 #000, 0 0 14px #000; text-align: center; }
+    #i { position: absolute; inset: 0; z-index: 3; background: #000; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+    #j { color: #eb7734; font-family: monospace; font-size: 28px; font-weight: bold; text-shadow: 0 0 12px #ff4fd0a0; }
+    #k, #l, #m { position: absolute; left: 50%; transform: translateX(-50%); z-index: 2; font-family: monospace; font-weight: bold; text-align: center; pointer-events: none; }
+    #k { top: 16vh; font-size: 80px; color: #eb7734; text-shadow: 0 4px 0 #fff, 0 0 24px #ffffff; letter-spacing: 1px; }
+    #l { top: calc(16vh + 96px); font-size: 20px; color: #111; text-shadow: 0 0 6px #fff9; letter-spacing: 2px; }
+    #m { top: 60%; font-size: 16px; color: #fff; text-shadow: 0 2px 0 #000, 0 0 8px #000a; }
+</style>
+</head>
+<body>
+<div id="a">[WASD] move / [SPACE] jump / [SHIFT] dash / [MOUSE] look around</div>
+<div id="b"></div>
+<div id="d"></div>
+<div id="e"></div>
+<div id="f"></div>
+<div id="g"></div>
+<div id="h"></div>
+<div id="i"><div id="j">[click to begin]</div></div>
+<div id="k">スーパーユニコーン</div>
+<div id="l">SUUPAA YUNIKOON</div>
+<div id="m">click or enter to begin</div>
+<canvas id="c"></canvas>
+<script>
+"use strict";
+
+// =====================================================================
+// vec3
+// =====================================================================
+const v3        = (x = 0, y = 0, z = 0) => ({ x, y, z });
+const vAdd      = (a, b) => v3(a.x + b.x, a.y + b.y, a.z + b.z);
+const vSub      = (a, b) => v3(a.x - b.x, a.y - b.y, a.z - b.z);
+const vScale    = (a, s) => v3(a.x * s, a.y * s, a.z * s);
+const vDot      = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+const vLen      = (a) => Math.sqrt(vDot(a, a));
+const vNorm     = (a) => { const l = vLen(a) || 1; return vScale(a, 1 / l); };
+const clamp     = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+const lerpAngle = (current, target, t) => { const diff = ((target - current + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI; return current + diff * t; };
+const ease      = (rate, dt) => 1 - Math.exp(-rate * dt);
+
+// =====================================================================
+// mat4
+// =====================================================================
+function mat4Identity() {
+    return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+}
+
+function mat4Multiply(a, b) {
+    const out = new Float32Array(16);
+    for (let c = 0; c < 4; c++) {
+        for (let r = 0; r < 4; r++) {
+            let sum = 0;
+            for (let k = 0; k < 4; k++) sum += a[k * 4 + r] * b[c * 4 + k];
+            out[c * 4 + r] = sum;
+        }
+    }
+    return out;
+}
+
+function mat4Perspective(fovyRad, aspect, near, far) {
+    const f     = 1 / Math.tan(fovyRad / 2);
+    const out   = new Float32Array(16);
+    out[0]      = f / aspect;
+    out[5]      = f;
+    out[10]     = (far + near) / (near - far);
+    out[11]     = -1;
+    out[14]     = (2 * far * near) / (near - far);
+    return out;
+}
+
+function mat4LookAt(eye, target, up) {
+    const z = vNorm(vSub(eye, target)); // camera looks down -z
+    const x = vNorm(cross(up, z));
+    const y = cross(z, x);
+    const out = new Float32Array(16);
+    out[0]=x.x; out[1]=y.x; out[2]=z.x; out[3]=0;
+    out[4]=x.y; out[5]=y.y; out[6]=z.y; out[7]=0;
+    out[8]=x.z; out[9]=y.z; out[10]=z.z; out[11]=0;
+    out[12]=-vDot(x,eye); out[13]=-vDot(y,eye); out[14]=-vDot(z,eye); out[15]=1;
+    return out;
+}
+
+function cross(a, b) {
+    return v3(
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x
+    );
+}
+
+// =====================================================================
+// quaternions
+// =====================================================================
+const quatIdentity = () => ({ x: 0, y: 0, z: 0, w: 1 });
+
+function quatFromAxisAngle(axis, angleRad) {
+    const n = vNorm(axis);
+    const half = angleRad / 2, s = Math.sin(half);
+    return { x: n.x * s, y: n.y * s, z: n.z * s, w: Math.cos(half) };
+}
+
+function quatMultiply(a, b) {
+    return {
+        x: a.w*b.x + a.x*b.w + a.y*b.z - a.z*b.y,
+        y: a.w*b.y - a.x*b.z + a.y*b.w + a.z*b.x,
+        z: a.w*b.z + a.x*b.y - a.y*b.x + a.z*b.w,
+        w: a.w*b.w - a.x*b.x - a.y*b.y - a.z*b.z,
+    };
+}
+
+function quatRotateVec(q, v) {
+    const qv = v3(q.x, q.y, q.z);
+    const t = vScale(cross(qv, v), 2);
+    return vAdd(vAdd(v, vScale(t, q.w)), cross(qv, t));
+}
+
+function mat4FromTRS(pos, quat, scaleVec) {
+    const { x, y, z, w } = quat;
+    const x2 = x + x, y2 = y + y, z2 = z + z;
+    const xx = x * x2, xy = x * y2, xz = x * z2;
+    const yy = y * y2, yz = y * z2, zz = z * z2;
+    const wx = w * x2, wy = w * y2, wz = w * z2;
+    const out = new Float32Array(16);
+    out[0] = (1 - (yy + zz)) * scaleVec.x;
+    out[1] = (xy + wz) * scaleVec.x;
+    out[2] = (xz - wy) * scaleVec.x;
+    out[4] = (xy - wz) * scaleVec.y;
+    out[5] = (1 - (xx + zz)) * scaleVec.y;
+    out[6] = (yz + wx) * scaleVec.y;
+    out[8] = (xz + wy) * scaleVec.z;
+    out[9] = (yz - wx) * scaleVec.z;
+    out[10] = (1 - (xx + yy)) * scaleVec.z;
+    out[15] = 1;
+    out[12] = pos.x; out[13] = pos.y; out[14] = pos.z;
+    return out;
+}
+
+function mat4NormalMatrix(quat, scaleVec) {
+    return mat4FromTRS(v3(0, 0, 0), quat, v3(1 / scaleVec.x, 1 / scaleVec.y, 1 / scaleVec.z));
+}
+
+
+// =====================================================================
+// webgl setup
+// =====================================================================
+const canvas = document.getElementById("c");
+const elHint    = document.getElementById("a");
+//const elHud = document.getElementById("b");
+const elTimer   = document.getElementById("d");
+const elStar    = document.getElementById("e");
+const elHiScore = document.getElementById("f");
+const elDeath   = document.getElementById("g");
+const elNewHi   = document.getElementById("h");
+const elBoot    = document.getElementById("i");
+const elJp      = document.getElementById("k");
+const elRomaji  = document.getElementById("l");
+const elBegin   = document.getElementById("m");
+
+const gl = canvas.getContext("webgl2");
+if (!gl) { elHint.textContent = "ERROR: No WebGL2"; throw new Error("no webgl2"); }
+
+function compileShader(src, type) {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+        throw new Error("sh error: " + gl.getShaderInfoLog(sh));
+    }
+    return sh;
+}
+
+function createProgram(vsSrc, fsSrc) {
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compileShader(vsSrc, gl.VERTEX_SHADER));
+    gl.attachShader(prog, compileShader(fsSrc, gl.FRAGMENT_SHADER));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+        throw new Error("lk error: " + gl.getProgramInfoLog(prog));
+    }
+    return prog;
+}
+
+
+/*
+// uncompressed shader:
+const VS = `#version 300 es
+in vec3 aPos;
+in vec3 aNormal;
+in vec2 aUV;
+uniform mat4 uMVP;
+uniform mat4 uModel;
+uniform mat4 uNormalMatrix;
+uniform vec2 uUVOffset;
+uniform vec2 uUVScale;
+out vec3 vNormal;
+out vec3 vWorldPos;
+out vec2 vUV;
+void main() {
+    vNormal = mat3(uNormalMatrix) * aNormal;
+    vWorldPos = (uModel * vec4(aPos, 1.0)).xyz;
+    vUV = aUV * uUVScale + uUVOffset;
+    gl_Position = uMVP * vec4(aPos, 1.0);
+}`;
+*/
+
+const VS = `#version 300 es
+in vec3 p;
+in vec3 q;
+in vec2 t;
+uniform mat4 A;
+uniform mat4 B;
+uniform mat4 C;
+uniform vec2 D;
+uniform vec2 E;
+out vec3 vNormal;
+out vec3 vWorldPos;
+out vec2 vUV;
+void main() {
+    vNormal = mat3(C) * q;
+    vWorldPos = (B * vec4(p, 1.0)).xyz;
+    vUV = t * E + D;
+    gl_Position = A * vec4(p, 1.0);
+}`;
+
+
+/*
+// uncompressed shader
+const FS = `#version 300 es
+precision highp float;
+in vec3 vNormal;
+in vec3 vWorldPos;
+in vec2 vUV;
+uniform vec3 uColor;
+uniform vec3 uLightDir;
+uniform float uAlpha;
+uniform vec3 uCamPos;
+uniform sampler2D uAtlas;
+uniform sampler2D uEnv;
+uniform float uUseTexture;
+uniform float uUnlit;
+uniform float uSideOnly;
+uniform vec3 uShadowPos;
+uniform float uShadowRadius;
+uniform float uShadowHeightRange;
+uniform float uShadowStrength;
+uniform float uReceiveShadow;
+out vec4 fragColor;
+void main() {
+    vec4 texSample = texture(uAtlas, vUV);
+    if (uUnlit > 0.5) {
+        fragColor = vec4(texSample.rgb, 1.0);
+        return;
+    }
+
+    vec3 n = normalize(vNormal);
+    vec3 lightDir = -normalize(uLightDir);
+    float diff  = max(dot(n, lightDir), 0.0);
+    vec3 viewDir = normalize(uCamPos - vWorldPos);
+    vec3 halfV  = normalize(lightDir + viewDir);
+    float spec  = pow(max(dot(n, halfV), 0.0), 28.0) * 0.5;
+    vec3 refl   = reflect(-viewDir, n);
+    float ru    = atan(refl.z, refl.x) / 6.28 + 0.5;
+    float rv    = asin(clamp(-refl.y, -1.0, 1.0)) / 3.14 + 0.5;
+    vec3 envColor = texture(uEnv, vec2(ru, rv)).rgb; // original
+    float NdotV = max(dot(n, viewDir), 0.0);
+    float fresnel = 0.94 + 0.96 * pow(1.0 - NdotV, 5.0);
+    float sideFactor = mix(1.0, 1.0 - smoothstep(0.35, 0.65, abs(n.y)), uSideOnly);
+    vec3 base   = mix(uColor, texSample.rgb, uUseTexture * sideFactor);
+    vec3 col    = base * (0.55 + 0.15 * diff);
+    col += envColor * fresnel * 0.45;
+    col += vec3(spec);
+
+    if (uReceiveShadow > 0.5) {
+        float shadowDistXZ = length(vWorldPos.xz - uShadowPos.xz);
+        float shadowHoriz = 1.0 - smoothstep(0.0, uShadowRadius, shadowDistXZ);
+        float shadowVert = 1.0 - smoothstep(0.0, uShadowHeightRange, abs(vWorldPos.y - uShadowPos.y));
+        float shadowAmount = shadowHoriz * shadowVert * uShadowStrength;
+        col *= (1.0 - shadowAmount);
+    }
+
+    fragColor = vec4(col, uAlpha);
+}`;
+*/
+
+
+const FS = `#version 300 es
+precision highp float;
+in vec3 vNormal;
+in vec3 vWorldPos;
+in vec2 vUV;
+uniform vec3 F;
+uniform vec3 G;
+uniform float H;
+uniform vec3 J;
+uniform sampler2D K;
+uniform sampler2D L;
+uniform float M;
+uniform float N;
+uniform float P;
+uniform vec3 Q;
+uniform float R;
+uniform float S;
+uniform float T;
+uniform float U;
+out vec4 fragColor;
+void main() {
+    vec4 ts = texture(K, vUV);
+    if (N > 0.5) {fragColor = vec4(ts.rgb, 1.0);return;}
+    vec3 n = normalize(vNormal);
+    vec3 ld = -normalize(G);
+    float d = max(dot(n, ld), 0.0);
+    vec3 vd = normalize(J - vWorldPos);
+    vec3 h = normalize(ld + vd);
+    float s = pow(max(dot(n, h), 0.0), 28.0) * 0.5;
+    vec3 r = reflect(-vd, n);
+    vec3 e = texture(L, vec2(atan(r.z, r.x) / 6.28 + 0.5, asin(clamp(-r.y, -1.0, 1.0)) / 3.14 + 0.5)).rgb;
+    float ndv = max(dot(n, vd), 0.0);
+    float f = 0.94 + 0.96 * pow(1.0 - ndv, 5.0);
+    float sf = mix(1.0, 1.0 - smoothstep(0.35, 0.65, abs(n.y)), P);
+    vec3 b = mix(F, ts.rgb, M * sf);
+    vec3 c = b * (0.55 + 0.15 * d);
+    c += e * f * 0.45;
+    c += vec3(s);
+    if (U > 0.5) {
+        float sd = length(vWorldPos.xz - Q.xz);
+        float sh = 1.0 - smoothstep(0.0, R, sd);
+        float sv = 1.0 - smoothstep(0.0, S, abs(vWorldPos.y - Q.y));
+        float sa = sh * sv * T;
+        c *= (1.0 - sa);
+    }
+    fragColor = vec4(c, H);
+}`;
+
+
+
+
+/*
+// uniforms:
+const locPos                = gl.getAttribLocation(prog, "aPos");
+const locNorm               = gl.getAttribLocation(prog, "aNormal");
+const locUV                 = gl.getAttribLocation(prog, "aUV");
+const locMVP                = gl.getUniformLocation(prog, "uMVP");
+const locModel              = gl.getUniformLocation(prog, "uModel");
+const locNormalMatrix       = gl.getUniformLocation(prog, "uNormalMatrix");
+const locUVOffset           = gl.getUniformLocation(prog, "uUVOffset");
+const locUVScale            = gl.getUniformLocation(prog, "uUVScale");
+const locColor              = gl.getUniformLocation(prog, "uColor");
+const locLight              = gl.getUniformLocation(prog, "uLightDir");
+const locAlpha              = gl.getUniformLocation(prog, "uAlpha");
+const locCamPos             = gl.getUniformLocation(prog, "uCamPos");
+const locAtlas              = gl.getUniformLocation(prog, "uAtlas");
+const locEnv                = gl.getUniformLocation(prog, "uEnv");
+const locUseTexture         = gl.getUniformLocation(prog, "uUseTexture");
+const locUnlit              = gl.getUniformLocation(prog, "uUnlit");
+const locSideOnly           = gl.getUniformLocation(prog, "uSideOnly");
+const locShadowPos          = gl.getUniformLocation(prog, "uShadowPos");
+const locShadowRadius       = gl.getUniformLocation(prog, "uShadowRadius");
+const locShadowHeightRange  = gl.getUniformLocation(prog, "uShadowHeightRange");
+const locShadowStrength     = gl.getUniformLocation(prog, "uShadowStrength");
+const locReceiveShadow      = gl.getUniformLocation(prog, "uReceiveShadow");
+*/
+
+
+const prog                  = createProgram(VS, FS);
+const locPos                = gl.getAttribLocation(prog, "p");
+const locNorm               = gl.getAttribLocation(prog, "q");
+const locUV                 = gl.getAttribLocation(prog, "t");
+const locMVP                = gl.getUniformLocation(prog, "A");
+const locModel              = gl.getUniformLocation(prog, "B");
+const locNormalMatrix       = gl.getUniformLocation(prog, "C");
+const locUVOffset           = gl.getUniformLocation(prog, "D");
+const locUVScale            = gl.getUniformLocation(prog, "E");
+const locColor              = gl.getUniformLocation(prog, "F");
+const locLight              = gl.getUniformLocation(prog, "G");
+const locAlpha              = gl.getUniformLocation(prog, "H");
+const locCamPos             = gl.getUniformLocation(prog, "J");
+const locAtlas              = gl.getUniformLocation(prog, "K");
+const locEnv                = gl.getUniformLocation(prog, "L");
+const locUseTexture         = gl.getUniformLocation(prog, "M");
+const locUnlit              = gl.getUniformLocation(prog, "N");
+const locSideOnly           = gl.getUniformLocation(prog, "P");
+const locShadowPos          = gl.getUniformLocation(prog, "Q");
+const locShadowRadius       = gl.getUniformLocation(prog, "R");
+const locShadowHeightRange  = gl.getUniformLocation(prog, "S");
+const locShadowStrength     = gl.getUniformLocation(prog, "T");
+const locReceiveShadow      = gl.getUniformLocation(prog, "U");
+
+function makeBoxMesh() {
+    const positions = [];
+    const normals   = [];
+    const uvs       = [];
+    const indices   = [];
+    const faces     = [
+        [[0,0,1],  [[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]]],
+        [[0,0,-1], [[1,-1,-1],[-1,-1,-1],[-1,1,-1],[1,1,-1]]],
+        [[0,1,0],  [[-1,1,1],[1,1,1],[1,1,-1],[-1,1,-1]]],
+        [[0,-1,0], [[-1,-1,-1],[1,-1,-1],[1,-1,1],[-1,-1,1]]],
+        [[1,0,0],  [[1,-1,1],[1,-1,-1],[1,1,-1],[1,1,1]]],
+        [[-1,0,0], [[-1,-1,-1],[-1,-1,1],[-1,1,1],[-1,1,-1]]],
+    ];
+    const faceUVs = [[0,0],[1,0],[1,1],[0,1]];
+    faces.forEach(([n, verts], fi) => {
+        verts.forEach((p, vi) => { positions.push(...p); normals.push(...n); uvs.push(...faceUVs[vi]); });
+        const base = fi * 4;
+        indices.push(base, base+1, base+2, base, base+2, base+3);
+    });
+    return { positions, normals, uvs, indices };
+}
+
+function makeSphereMesh(lat = 10, lon = 14) {
+    const positions = [];
+    const normals = [];
+    const uvs = [];
+    const indices = [];
+    for (let i = 0; i <= lat; i++) {
+        const theta = i * Math.PI / lat;
+        const st = Math.sin(theta), ct = Math.cos(theta);
+        for (let j = 0; j <= lon; j++) {
+            const phi = j * 2 * Math.PI / lon;
+            const sp = Math.sin(phi), cp = Math.cos(phi);
+            const x = st * cp, y = ct, z = st * sp;
+            positions.push(x, y, z);
+            normals.push(x, y, z);
+            uvs.push(j / lon, i / lat);
+        }
+    }
+    for (let i = 0; i < lat; i++) {
+        for (let j = 0; j < lon; j++) {
+            const a = i * (lon + 1) + j;
+            const b = a + lon + 1;
+            indices.push(a, b, a + 1,  a + 1, b, b + 1);
+        }
+    }
+    return { positions, normals, uvs, indices };
+}
+
+function planarUV(p, n) {
+    const ax = Math.abs(n.x), ay = Math.abs(n.y), az = Math.abs(n.z);
+    const [u, v] = (ax >= ay && ax >= az) ? [p.z, p.y] : (ay >= az) ? [p.x, p.z] : [p.x, p.y];
+    return [u * 0.5 + 0.5, v * 0.5 + 0.5];
+}
+
+function pushQuadAuto(positions, normals, uvs, indices, p0, p1, p2, p3, refN) {
+    const implied = cross(vSub(p1, p0), vSub(p2, p0));
+    const pts = (vDot(implied, refN) >= 0) ? [p0, p1, p2, p3] : [p0, p3, p2, p1];
+    const base = positions.length / 3;
+    pts.forEach(p => {
+        positions.push(p.x, p.y, p.z);
+        normals.push(refN.x, refN.y, refN.z);
+        uvs.push(...planarUV(p, refN));
+    });
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+}
+
+function pushTriAuto(positions, normals, uvs, indices, p0, p1, p2, refN) {
+    const implied = cross(vSub(p1, p0), vSub(p2, p0));
+    const pts = (vDot(implied, refN) >= 0) ? [p0, p1, p2] : [p0, p2, p1];
+    const base = positions.length / 3;
+    pts.forEach(p => {
+        positions.push(p.x, p.y, p.z);
+        normals.push(refN.x, refN.y, refN.z);
+        uvs.push(...planarUV(p, refN));
+    });
+    indices.push(base, base + 1, base + 2);
+}
+
+function pushQuadSmooth(positions, normals, uvs, indices, p0, n0, p1, n1, p2, n2, p3, n3, refN) {
+    const implied = cross(vSub(p1, p0), vSub(p2, p0));
+    const pts = (vDot(implied, refN) >= 0) ? [[p0, n0], [p1, n1], [p2, n2], [p3, n3]] : [[p0, n0], [p3, n3], [p2, n2], [p1, n1]];
+    const base = positions.length / 3;
+    pts.forEach(([p, n]) => {
+        positions.push(p.x, p.y, p.z);
+        normals.push(n.x, n.y, n.z);
+        uvs.push(...planarUV(p, n));
+    });
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+}
+
+function pushTriSmooth(positions, normals, uvs, indices, p0, n0, p1, n1, p2, n2, refN) {
+    const implied = cross(vSub(p1, p0), vSub(p2, p0));
+    const pts = (vDot(implied, refN) >= 0) ? [[p0, n0], [p1, n1], [p2, n2]] : [[p0, n0], [p2, n2], [p1, n1]];
+    const base = positions.length / 3;
+    pts.forEach(([p, n]) => {
+        positions.push(p.x, p.y, p.z);
+        normals.push(n.x, n.y, n.z);
+        uvs.push(...planarUV(p, n));
+    });
+    indices.push(base, base + 1, base + 2);
+}
+
+function makeRoundedBoxMesh(chamfer = 0.22, segments = 3) {
+    const positions = [], normals = [], uvs = [], indices = [];
+    const R = 1 - chamfer;
+    const r = chamfer;
+    const signs = [-1, 1];
+    const HALF_PI = Math.PI / 2;
+    const Qx = (sx, sy, sz) => v3(sx, sy * R, sz * R);
+    const Qy = (sx, sy, sz) => v3(sx * R, sy, sz * R);
+    const Qz = (sx, sy, sz) => v3(sx * R, sy * R, sz);
+
+    for (const sx of signs) pushQuadAuto(positions, normals, uvs, indices, Qx(sx,-1,-1), Qx(sx,-1,1), Qx(sx,1,1), Qx(sx,1,-1), v3(sx,0,0));
+    for (const sy of signs) pushQuadAuto(positions, normals, uvs, indices, Qy(-1,sy,-1), Qy(-1,sy,1), Qy(1,sy,1), Qy(1,sy,-1), v3(0,sy,0));
+    for (const sz of signs) pushQuadAuto(positions, normals, uvs, indices, Qz(-1,-1,sz), Qz(-1,1,sz), Qz(1,1,sz), Qz(1,-1,sz), v3(0,0,sz));
+
+
+    function edgeFillet(along) {
+        for (let i = 0; i < segments; i++) {
+            const a0 = i / segments * HALF_PI, a1 = (i + 1) / segments * HALF_PI;
+            const p00 = along(a0, R), p01 = along(a0, -R), p11 = along(a1, -R), p10 = along(a1, R);
+            pushQuadSmooth(positions, normals, uvs, indices,
+                p00.p, p00.n, p01.p, p01.n, p11.p, p11.n, p10.p, p10.n,
+                vAdd(p00.n, p11.n));
+        }
+    }
+
+    for (const sx of signs) {
+        for (const sy of signs) {
+            edgeFillet((theta, z) => {
+                const ca = Math.cos(theta) * r, sa = Math.sin(theta) * r;
+                return { p: v3(sx * (R + ca), sy * (R + sa), z), n: v3(sx * Math.cos(theta), sy * Math.sin(theta), 0) };
+            });
+        }
+    }
+
+    for (const sx of signs) {
+        for (const sz of signs) {
+            edgeFillet((theta, y) => {
+                const ca = Math.cos(theta) * r, sa = Math.sin(theta) * r;
+                return { p: v3(sx * (R + ca), y, sz * (R + sa)), n: v3(sx * Math.cos(theta), 0, sz * Math.sin(theta)) };
+            });
+        }
+    }
+
+    for (const sy of signs) {
+        for (const sz of signs) {
+            edgeFillet((theta, x) => {
+                const ca = Math.cos(theta) * r, sa = Math.sin(theta) * r;
+                return { p: v3(x, sy * (R + ca), sz * (R + sa)), n: v3(0, sy * Math.cos(theta), sz * Math.sin(theta)) };
+            });
+        }
+    }
+
+    for (const sx of signs) for (const sy of signs) for (const sz of signs) {
+        const at = (theta, phi) => {
+            const st = Math.sin(theta);
+            const d = v3(sx * st * Math.cos(phi), sy * st * Math.sin(phi), sz * Math.cos(theta));
+            return { p: v3(sx * R + r * d.x, sy * R + r * d.y, sz * R + r * d.z), n: d };
+        };
+
+        for (let i = 0; i < segments; i++) {
+            const t0 = i / segments * HALF_PI, t1 = (i + 1) / segments * HALF_PI;
+            for (let j = 0; j < segments; j++) {
+                const p0 = j / segments * HALF_PI, p1 = (j + 1) / segments * HALF_PI;
+                const a = at(t0, p0), b = at(t0, p1), c = at(t1, p1), d = at(t1, p0);
+                pushQuadSmooth(positions, normals, uvs, indices, a.p, a.n, b.p, b.n, c.p, c.n, d.p, d.n, vNorm(v3(sx, sy, sz)));
+            }
+        }
+    }
+
+    return { positions, normals, uvs, indices };
+}
+
+function makeStarMesh(outerR = 1, innerR = 0.42, depth = 0.32) {
+    const
+        positions   = [],
+        normals     = [],
+        uvs         = [],
+        indices     = [],
+        pts         = [];
+
+    for (let k = 0; k < 10; k++) {
+        const angle = Math.PI / 2 - k * (Math.PI * 2 / 10);
+        const r = (k % 2 === 0) ? outerR : innerR;
+        pts.push(v3(Math.cos(angle) * r, Math.sin(angle) * r, 0));
+    }
+
+    function pushFace(zSign) {
+        const base = positions.length / 3;
+        const n = [0, 0, zSign];
+        positions.push(0, 0, zSign * depth);
+        normals.push(...n);
+        uvs.push(0.5, 0.5);
+        for (let k = 0; k < 10; k++) {
+            positions.push(pts[k].x, pts[k].y, zSign * depth);
+            normals.push(...n);
+            uvs.push(0.5, 0.5);
+        }
+
+        for (let k = 0; k < 10; k++) {
+            const
+                a = base,
+                b = base + 1 + k,
+                c = base + 1 + ((k + 1) % 10);
+
+            if (zSign > 0) {
+                indices.push(a, c, b);
+            }
+            else {
+                indices.push(a, b, c);
+            }
+        }
+    }
+
+    pushFace(1);
+    pushFace(-1);
+
+    for (let k = 0; k < 10; k++) {
+        const p0 = pts[k], p1 = pts[(k + 1) % 10];
+        const ex = p1.x - p0.x, ey = p1.y - p0.y;
+        const refN = vNorm(v3(-ey, ex, 0));
+        pushQuadAuto(positions, normals, uvs, indices,
+            v3(p0.x, p0.y, depth), v3(p1.x, p1.y, depth), v3(p1.x, p1.y, -depth), v3(p0.x, p0.y, -depth), refN);
+    }
+
+    return { positions, normals, uvs, indices };
+}
+
+function makeCapsuleMesh(segments = 12, capRings = 3) {
+    const
+        positions   = [],
+        normals     = [],
+        uvs         = [],
+        indices     = [],
+        pts         = [];
+
+    for (let i = 0; i < segments; i++) {
+        const a = i / segments * Math.PI * 2;
+        pts.push([Math.cos(a), Math.sin(a)]);
+    }
+
+    for (let i = 0; i < segments; i++) {
+        const i2 = (i + 1) % segments;
+        const p0 = pts[i], p1 = pts[i2];
+        const n0 = v3(p0[0], 0, p0[1]), n1 = v3(p1[0], 0, p1[1]);
+        pushQuadSmooth(positions, normals, uvs, indices, v3(p0[0], -1, p0[1]), n0, v3(p1[0], -1, p1[1]), n1, v3(p1[0], 1, p1[1]), n1, v3(p0[0], 1, p0[1]), n0, vAdd(n0, n1));
+    }
+
+    function cap(sign) {
+        const at = (theta, j) => {
+            const ct = Math.cos(theta), st = Math.sin(theta);
+            const d = v3(pts[j][0] * ct, sign * st, pts[j][1] * ct);
+            return { p: v3(d.x, sign * 1 + d.y, d.z), n: d };
+        };
+
+        for (let r = 0; r < capRings; r++) {
+            const
+                t0 = r / capRings * Math.PI / 2,
+                t1 = (r + 1) / capRings * Math.PI / 2;
+
+            for (let i = 0; i < segments; i++) {
+                const i2 = (i + 1) % segments;
+                const a = at(t0, i), b = at(t0, i2), c = at(t1, i2), d = at(t1, i);
+                pushQuadSmooth(positions, normals, uvs, indices, a.p, a.n, b.p, b.n, c.p, c.n, d.p, d.n, vNorm(vAdd(vAdd(a.n, b.n), vAdd(c.n, d.n))));
+            }
+        }
+    }
+    cap(1);
+    cap(-1);
+
+    return { positions, normals, uvs, indices };
+}
+
+function makeConeMesh(segments = 10) {
+
+    const
+        positions   = [],
+        normals     = [],
+        uvs         = [],
+        indices     = [],
+        pts         = [];
+
+    for (let i = 0; i < segments; i++) {
+        const a = i / segments * Math.PI * 2;
+        pts.push([Math.cos(a), Math.sin(a)]);
+    }
+
+    const apex = v3(0, 1, 0);
+
+    for (let i = 0; i < segments; i++) {
+        const i2        = (i + 1) % segments;
+        const theta0    = i / segments * Math.PI * 2, theta1 = i2 / segments * Math.PI * 2;
+        const thetaMid  = (i + 0.5) / segments * Math.PI * 2;
+        const n0        = vNorm(v3(2 * Math.cos(theta0), 1, 2 * Math.sin(theta0)));
+        const n1        = vNorm(v3(2 * Math.cos(theta1), 1, 2 * Math.sin(theta1)));
+        const nApex     = vNorm(v3(2 * Math.cos(thetaMid), 1, 2 * Math.sin(thetaMid)));
+        pushTriSmooth(positions, normals, uvs, indices, apex, nApex, v3(pts[i][0],-1,pts[i][1]), n0, v3(pts[i2][0],-1,pts[i2][1]), n1, nApex);
+    }
+    for (let i = 0; i < segments; i++) {
+        const i2 = (i + 1) % segments;
+        pushTriAuto(positions, normals, uvs, indices, v3(0,-1,0), v3(pts[i][0],-1,pts[i][1]), v3(pts[i2][0],-1,pts[i2][1]), v3(0,-1,0));
+    }
+    return { positions, normals, uvs, indices };
+}
+
+
+function uploadMesh(mesh) {
+    const vao = gl.createVertexArray();
+    gl.bindVertexArray(vao);
+
+    const posBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(mesh.positions), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(locPos);
+    gl.vertexAttribPointer(locPos, 3, gl.FLOAT, false, 0, 0);
+
+    const normBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, normBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(mesh.normals), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(locNorm);
+    gl.vertexAttribPointer(locNorm, 3, gl.FLOAT, false, 0, 0);
+
+    const uvBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(mesh.uvs), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(locUV);
+    gl.vertexAttribPointer(locUV, 2, gl.FLOAT, false, 0, 0);
+
+    const idxBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(mesh.indices), gl.STATIC_DRAW);
+
+    gl.bindVertexArray(null);
+    return { vao, count: mesh.indices.length };
+}
+
+const boxGpu        = uploadMesh(makeBoxMesh());
+const roundedBoxGpu = uploadMesh(makeRoundedBoxMesh(0.1, 3));
+const starGpu       = uploadMesh(makeStarMesh());
+const capsuleGpu    = uploadMesh(makeCapsuleMesh());
+const coneGpu       = uploadMesh(makeConeMesh());
+const skyGpu        = uploadMesh(makeSphereMesh(16, 24));
+
+const NO_TEX        = { uvOffset: [0, 0], uvScale: [1, 1], unlit: false, sideOnly: false, receiveShadow: false };
+
+
+function drawMesh(gpu, modelMatrix, normalMatrix, viewProj, color, alpha = 1.0, texOpts = null) {
+    gl.bindVertexArray(gpu.vao);
+    const mvp = mat4Multiply(viewProj, modelMatrix);
+    gl.uniformMatrix4fv(locMVP, false, mvp);
+    gl.uniformMatrix4fv(locModel, false, modelMatrix);
+    gl.uniformMatrix4fv(locNormalMatrix, false, normalMatrix);
+    gl.uniform3f(locColor, color[0], color[1], color[2]);
+    gl.uniform1f(locAlpha, alpha);
+    const t = texOpts || NO_TEX;
+    gl.uniform2f(locUVOffset, t.uvOffset[0], t.uvOffset[1]);
+    gl.uniform2f(locUVScale, t.uvScale[0], t.uvScale[1]);
+    gl.uniform1f(locUseTexture, texOpts ? 1 : 0);
+    gl.uniform1f(locSideOnly, t.sideOnly ? 1 : 0);
+    gl.uniform1f(locUnlit, t.unlit ? 1 : 0);
+    gl.uniform1f(locReceiveShadow, t.receiveShadow ? 1 : 0);
+    gl.drawElements(gl.TRIANGLES, gpu.count, gl.UNSIGNED_SHORT, 0);
+}
+
+function drawMeshTRS(gpu, pos, quat, scale, viewProj, color, alpha = 1.0, texOpts = null) {
+    drawMesh(gpu, mat4FromTRS(pos, quat, scale), mat4NormalMatrix(quat, scale), viewProj, color, alpha, texOpts);
+}
+
+
+const texRng = Math.random;
+const rnd = (a, b) => a + texRng() * (b - a);
+const argba = (c) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${c[3] === undefined ? 1 : c[3]})`;
+
+function shuffle(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = (rnd(0, 1) * (i + 1)) | 0;
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+}
+
+// =====================================================================
+// ATexture, v2.0 lite
+// =====================================================================
+
+class ATexture {
+    constructor(name, w, h) {
+        const c = document.createElement("canvas");
+        c.id = name;
+        h = h || w;
+        this.w = c.width = w;
+        this.h = c.height = h;
+        this.c = c;
+        this.ctx = c.getContext("2d");
+    }
+
+    box(x, y, w, h, c, outline) {
+        this.ctx.fillStyle = this.ctx.strokeStyle = argba(c);
+        if (outline) {
+            this.ctx.lineWidth = outline * this.w;
+            this.ctx.strokeRect(x * this.w, y * this.h, w * this.w, h * this.h);
+        }
+        else {
+            this.ctx.fillRect(x * this.w, y * this.h, w * this.w, h * this.h);
+        }
+        return this;
+    }
+
+    // colors: array of [r,g,b,a], evenly spaced, top to bottom
+    gradient(x, y, w, h, colors) {
+        const g = this.ctx.createLinearGradient((x + w / 2) * this.w, y * this.h, (x + w / 2) * this.w, (y + h) * this.h);
+        colors.forEach((c, i) => g.addColorStop(i / (colors.length - 1), argba(c)));
+        this.ctx.fillStyle = g;
+        this.ctx.fillRect(x * this.w, y * this.h, w * this.w, h * this.h);
+        return this;
+    }
+
+
+/*
+    // bring me back if needed
+    noise(color = [1, 1, 1], cut = 1, cb) {
+        cb = cb || (() => rnd(0, 255));
+        const img = this.ctx.getImageData(0, 0, this.c.width, this.c.height);
+        const p = img.data;
+        for (let i = 0; i < p.length; i += 4) {
+            if (texRng() <= cut) {
+                const v = cb(i);
+                p[i] += color[0] * v; p[i + 1] += color[1] * v; p[i + 2] += color[2] * v;
+            }
+            p[i + 3] = 255;
+        }
+        this.ctx.putImageData(img, 0, 0);
+        return this;
+    }
+
+    perlin(atex, octaves = 4, sx = 1, sy = 1) {
+        this.ctx.save();
+        for (let size = octaves; size <= atex.c.width; size *= 2) {
+            const x = (texRng() * (atex.c.width - size)) | 0;
+            const y = (texRng() * (atex.c.width - size)) | 0;
+            this.ctx.globalAlpha = octaves / size;
+            this.ctx.drawImage(atex.c, x, y, size, size, 0, 0, this.c.width * sx, this.c.height * sy);
+        }
+        this.ctx.restore();
+        return this;
+    }
+*/
+
+    text(x, y, str, c, size = 0.1) {
+        this.ctx.fillStyle = argba(c);
+        this.ctx.font = `${size * this.w}px sans-serif`;
+        this.ctx.textAlign = "center";
+        this.ctx.fillText(str, x * this.w, y * this.h);
+        return this;
+    }
+
+/*
+    image(atex, x = 0, y = 0, w = 1, h = 1, alpha = 1) {
+        this.ctx.globalAlpha = alpha;
+        this.ctx.drawImage(atex.c, x * this.w, y * this.h, w * this.w, h * this.h);
+        this.ctx.globalAlpha = 1;
+        return this;
+    }
+*/
+
+    blob(x, y, r, c) {
+        const cx = x * this.w, cy = y * this.h, rad = r * this.w;
+        const g = this.ctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
+        const [cr, cg, cb, ca = 1] = c;
+        g.addColorStop(0, `rgba(${cr},${cg},${cb},${ca})`); // todo: optimize / use function
+        g.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
+        this.ctx.fillStyle = g;
+        this.ctx.beginPath();
+        this.ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+        this.ctx.fill();
+        return this;
+    }
+}
+
+
+const ATLAS_COLS    = 3;
+const ATLAS_ROWS    = 2;
+const ATLAS_CELL_PX = 256;
+const ATLAS_W       = ATLAS_COLS * ATLAS_CELL_PX;
+const ATLAS_H       = ATLAS_ROWS * ATLAS_CELL_PX;
+
+const ATLAS_CELLS = [
+    [0,   0,   0,   1], // ground tiles (used)
+    [255, 132, 0,   1], // trampoline (used)
+    [128, 204, 230, 1], // tilted ramp (unused)
+    [230, 153, 77,  1], // pillars (unused)
+    [255, 225, 235, 1], // player (used)
+    // last quadrant - unused
+];
+
+const PLAYER_CELL = 4;
+
+function atlasCellUV(cell) {
+    const col = cell % ATLAS_COLS, row = (cell / ATLAS_COLS) | 0;
+    return { uvOffset: [col / ATLAS_COLS, row / ATLAS_ROWS], uvScale: [1 / ATLAS_COLS, 1 / ATLAS_ROWS] };
+}
+
+const PLAYER_TEX    = atlasCellUV(PLAYER_CELL);
+const texAtlas      = new ATexture("tex-atlas", ATLAS_W, ATLAS_H);
+
+ATLAS_CELLS.forEach((color, i) => {
+    const { uvOffset, uvScale } = atlasCellUV(i);
+    texAtlas.box(uvOffset[0], uvOffset[1], uvScale[0], uvScale[1], color);
+});
+
+texAtlas.text(0.17, 0.45, "▩", [255, 255, 255, 0.2], 0.5); // details for ground tiles
+texAtlas.text(0.5, 0.45, "▼", [255, 255, 255, 0.2], 0.5); // details for trampoline
+texAtlas.box(0.35, 0.5, 0.3, 0.1, [2, 2, 2, 1.0]); // character's clothing details
+
+
+// skybox + envmap
+const texSky = new ATexture("tex-sky", 64, 64);
+texSky.gradient(0, 0, 1, 1, [[101, 191, 255, 1], [135, 138, 140, 1]]);
+
+for (let i = 0; i < 15; i++) {
+    const cx = rnd(0.05, 0.95), cy = rnd(0.40, 0.50);
+    const r = rnd(0.085, 0.13);
+    texSky.blob(cx, cy, r, [201, 291, 255, 0.15]);
+    texSky.blob(cx + r * 0.4, cy, r * 0.7, [201, 291, 255, 0.15]);
+}
+
+
+function uploadTexture(source, { wrapS = gl.CLAMP_TO_EDGE, wrapT = gl.CLAMP_TO_EDGE, mipmap = false } = {}) {
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrapS);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrapT);
+    if (mipmap) {
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    }
+    else {
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    }
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    return tex;
+}
+
+
+const atlasTex  = uploadTexture(texAtlas.c);
+const skyTex    = uploadTexture(texSky.c, { wrapS: gl.REPEAT });
+
+// we only need to bind this once for the object shader
+const envTex    = uploadTexture(texSky.c, { wrapS: gl.REPEAT });
+gl.activeTexture(gl.TEXTURE1);
+gl.bindTexture(gl.TEXTURE_2D, envTex);
+gl.useProgram(prog);
+gl.uniform1i(locAtlas, 0);
+gl.uniform1i(locEnv, 1);
+
+
+const staticBoxes = []; // {cx, cy, cz, hx, hy, hz, color, orientation, uvOffset, uvScale, type} // orientation is optional
+
+const CELL_TYPES = ["ground", "trampoline", "ramp", "pinball"]; // index = atlas cell; now only the ground and trampoline remain
+
+
+function addBox(cx, cy, cz, hx, hy, hz, color, orientation, cell = 0) {
+    const q = orientation || quatIdentity();
+    const { uvOffset, uvScale } = atlasCellUV(cell);
+    const type = CELL_TYPES[cell] || "ground";
+    staticBoxes.push({ cx, cy, cz, hx, hy, hz, color, orientation: q, uvOffset, uvScale, type });
+}
+
+
+const TILE = 2;
+const GRID = 6;
+const tileKey = ([ix, iz]) => ix + "," + iz;
+
+let GROUND_SPAWN_POINTS = [];
+const GAP_COUNT         = 20;
+const STACKED_COUNT     = 45;
+const TRAMPOLINE_COUNT  = 7;
+
+
+function generateLevel() {
+    staticBoxes.length = 0;
+    let tileCandidates = [];
+
+    for (let ix = -GRID; ix <= GRID; ix++) {
+        for (let iz = -GRID; iz <= GRID; iz++) {
+            if (ix !== 0 || iz !== 0) {
+                tileCandidates.push([ix, iz]);
+            }
+        }
+    }
+
+    shuffle(tileCandidates);
+
+    const gapTiles          = new Set(tileCandidates.splice(0, GAP_COUNT).map(tileKey));
+    const stackedTiles      = new Set(tileCandidates.splice(0, STACKED_COUNT).map(tileKey));
+    const trampolineTiles   = tileCandidates.splice(0, TRAMPOLINE_COUNT);
+
+    for (let ix = -GRID; ix <= GRID; ix++) {
+        for (let iz = -GRID; iz <= GRID; iz++) {
+            if (gapTiles.has(tileKey([ix, iz]))) continue;
+
+            const yOffset = stackedTiles.has(tileKey([ix, iz])) ? -rnd(TILE * 0.5, TILE) : 0;
+            addBox(ix * TILE * 2, -TILE + yOffset, iz * TILE * 2, TILE, TILE, TILE, [rnd(0.3, 0.8), rnd(0.2, 0.4), rnd(0.4, 0.7)], null, 0); // SET BASE COLOR 0.55, 0.55, 0.65
+        }
+    }
+
+    for (const [ix, iz] of trampolineTiles) {
+        addBox(ix * TILE * 2, 0.5, iz * TILE * 2, 1.5, 0.75, 1.5, [255, 132, 0], null, 1);
+    }
+
+    const occupiedSpots = new Set([...trampolineTiles].map(([ix, iz]) => `${ix * TILE * 2},${iz * TILE * 2}`));
+    GROUND_SPAWN_POINTS = staticBoxes
+        .filter(b => b.type === "ground" && !occupiedSpots.has(`${b.cx},${b.cz}`))
+        .map(b => v3(b.cx, b.cy + b.hy + 0.4, b.cz));
+}
+
+
+const GRAVITY             = -22,
+    MOVE_SPEED            = 5.5,
+    JUMP_SPEED            = 8.5,
+    PLAYER_RUN_MULTIPLIER =  2.0,
+    PLAYER_RADIUS         = 0.4,
+    RESET_Y               = -15,  // "gameover" height
+    TRAMPOLINE_SPEED      = 24,
+    BOUNCE_SFX_COOLDOWN   = 0.15;
+
+let bounceSfxCooldown       = 0;
+
+const player = {
+    position:   v3(0, 2, 0),
+    velocity:   v3(0, 0, 0),
+    impulse:    v3(0, 0, 0),
+    radius:     PLAYER_RADIUS,
+    grounded:   false,
+};
+
+function resetRun() {
+    player.position = v3(0, 2, 0);
+    player.velocity = v3(0, 0, 0);
+    player.grounded = false;
+    trailCount      = 0;
+    trailWriteIndex = 0;
+    lastTrailPoint  = null;
+    hasMoved        = false;
+    score           = 0;
+    runElapsed      = 0; // seconds-survived counter
+    newHighScoreAnnounced       = false;
+    grabBurstParticles.length   = 0;
+    pickNewTreasure();
+}
+
+const DEATH_HITSTOP_DURATION    = 1.8;
+const DEATH_CAM_LERP_RATE       = 6;
+let deathHitStop                = 0;
+let deathCamEye                 = null;
+let deathCamTarget              = null;
+
+const DEATH_MESSAGES = {
+    trail:      ["DON'T TOUCH YOUR TAIL!"],
+    timeout:    ["TIME'S UP!", "NO MORE TIME!"],
+    fall:       ["GRAVITY = 1; UNICORN = 0", "NOooOOoooooo..."],
+};
+
+let deathMessage = "";
+
+
+function triggerDeath(reason) {
+    deathHitStop    = DEATH_HITSTOP_DURATION;
+    const msgs      = DEATH_MESSAGES[reason] || DEATH_MESSAGES.trail;
+    deathMessage    = msgs[(rnd(0, msgs.length)) | 0];
+    const angle     = charFacingYaw + 0.5;
+    deathCamEye     = vAdd(player.position, v3(Math.sin(angle) * 4, 2.0, -Math.cos(angle) * 4));
+    deathCamTarget  = vAdd(player.position, v3(0, 0.8, 0));
+    sfx(SFX_DEATH);
+}
+
+function resolveSphereVsBox(body, box) {
+    const cx = clamp(body.position.x, box.cx - box.hx, box.cx + box.hx);
+    const cy = clamp(body.position.y, box.cy - box.hy, box.cy + box.hy);
+    const cz = clamp(body.position.z, box.cz - box.hz, box.cz + box.hz);
+    let dx = body.position.x - cx, dy = body.position.y - cy, dz = body.position.z - cz;
+    const distSq = dx*dx + dy*dy + dz*dz;
+    if (distSq >= body.radius * body.radius) return null;
+
+    let dist = Math.sqrt(distSq);
+    let n;
+    if (dist < 1e-5) {
+        n = v3(0, 1, 0); dist = 0;
+    }
+    else {
+        n = v3(dx / dist, dy / dist, dz / dist);
+    }
+
+    const penetration = body.radius - dist;
+    body.position.x += n.x * penetration;
+    body.position.y += n.y * penetration;
+    body.position.z += n.z * penetration;
+
+    const vn = body.velocity.x * n.x + body.velocity.y * n.y + body.velocity.z * n.z;
+    if (vn < 0) {
+        body.velocity.x -= vn * n.x;
+        body.velocity.y -= vn * n.y;
+        body.velocity.z -= vn * n.z;
+    }
+    if (n.y > 0.5) body.grounded = true;
+    return n;
+}
+
+const CAM_COLLISION_RADIUS = 0.4;
+const CAM_COLLISION_PASSES = 3;
+
+// this is still broken, having a proper 3d camera without entering objects requires raycasting and a bunch of other stuff :(
+function pushCameraOutOfGeometry(pos) {
+    let out = pos;
+    for (let pass = 0; pass < CAM_COLLISION_PASSES; pass++) {
+        for (const box of staticBoxes) {
+            const cx = clamp(out.x, box.cx - box.hx, box.cx + box.hx);
+            const cy = clamp(out.y, box.cy - box.hy, box.cy + box.hy);
+            const cz = clamp(out.z, box.cz - box.hz, box.cz + box.hz);
+            const dx = out.x - cx, dy = out.y - cy, dz = out.z - cz;
+            const distSq = dx * dx + dy * dy + dz * dz;
+
+            if (distSq >= CAM_COLLISION_RADIUS * CAM_COLLISION_RADIUS) continue;
+
+            let dist = Math.sqrt(distSq);
+            const n = dist < 1e-5 ? v3(0, 1, 0) : v3(dx / dist, dy / dist, dz / dist);
+            out = vAdd(out, vScale(n, CAM_COLLISION_RADIUS - dist));
+        }
+    }
+    return out;
+}
+
+
+const
+    SHADOW_RADIUS       = 0.6,
+    SHADOW_HEIGHT_RANGE = 3.0,
+    SHADOW_STRENGTH     = 0.55,
+    CHAR_LEG_HALF_H     = 0.15,
+    CHAR_LEG_R          = 0.09,
+    CHAR_LEG_SPACING    = 0.16,
+    CHAR_BODY_HALF_H    = 0.27,
+    CHAR_BODY_R         = 0.26,
+    CHAR_HORN_HALF_H    = 0.25,
+    CHAR_HORN_R         = 0.14,
+    CHAR_ARM_HALF_H     = 0.1,
+    CHAR_ARM_R          = 0.1,
+    ARM_SPREAD          = 0.6,
+    SHOULDER_OUTSET     = 1.15,
+    EYE_R               = 0.045,
+    NOSE_R              = 0.14,
+    CHAR_COLOR          = [1.0, 0.8, 0.9],
+    CHAR_HORN_COLOR     = [0.1, 0.1, 0.12],
+    EYE_COLOR           = [0.05, 0.05, 0.08],
+    TORSO_TILT_WALK_MAX = -0.45,
+    TORSO_TILT_RUN_MAX  = -0.7,
+    TORSO_TILT_RATE     = 7,
+    IDLE_BOB_AMP        = 0.035,
+    IDLE_BOB_RATE       = 3,
+    BODY_ROLL_MAX       = 0.3, // radians
+    BODY_ROLL_RATE      = 8,
+    ARM_POSE_RATE       = 8,
+    ARM_WALK_SWING_SCALE= 0.35,
+    JUMP_UP_SWING       = -2.3,
+    JUMP_UP_SPREAD_SCALE= 1.0,
+    JUMP_TUCK_SWING     = -0.4,
+    JUMP_TUCK_SPREAD_SCALE = 0.25,
+    FALL_SWING          = -2.1,
+    FALL_FLAP_AMP       = 0.5,
+    FALL_FLAP_RATE      = 20,
+    HORN_TILT           = -0.75,
+    HORN_OFFSET         = v3(0, 0.15, -0.3);
+
+let torsoTilt           = 0;
+let bodyRoll            = 0;
+let armPose             = [{ spread: -ARM_SPREAD, swing: 0 }, { spread: ARM_SPREAD, swing: 0 }];
+
+
+
+
+function drawPlayer(pos, facingYaw, viewProj, dt) {
+    const facing        = quatFromAxisAngle(v3(0, 1, 0), -facingYaw);
+    const groundY       = pos.y - PLAYER_RADIUS;
+    const horizSpeed    = Math.sqrt(player.velocity.x ** 2 + player.velocity.z ** 2);
+    const swingMag      = (player.grounded ? Math.min(horizSpeed / MOVE_SPEED, 1) : 1) * 0.86;
+    const phase         = animTime * 12;
+    const flapPhase     = animTime * FALL_FLAP_RATE;
+    const isRunning     = keys["ShiftLeft"] || keys["ShiftRight"];
+    const runTopSpeed   = MOVE_SPEED * PLAYER_RUN_MULTIPLIER;
+    const forwardSpeed  = vDot(player.velocity, getCameraBasis().forward);
+    const forwardRatio  = clamp(forwardSpeed / (isRunning ? runTopSpeed : MOVE_SPEED), -1, 1);
+    const torsoTiltTarget = player.grounded ? forwardRatio * (isRunning ? TORSO_TILT_RUN_MAX : TORSO_TILT_WALK_MAX) : 0;
+    torsoTilt += (torsoTiltTarget - torsoTilt) * ease(TORSO_TILT_RATE, dt);
+
+
+    const strafeSpeed   = vDot(player.velocity, getCameraBasis().right);
+    const strafeRatio   = clamp(strafeSpeed / (isRunning ? runTopSpeed : MOVE_SPEED), -1, 1);
+    const bodyRollTarget = player.grounded ? -strafeRatio * BODY_ROLL_MAX : 0;
+    bodyRoll += (bodyRollTarget - bodyRoll) * ease(BODY_ROLL_RATE, dt);
+
+    const localTilt     = quatMultiply(quatFromAxisAngle(v3(0, 0, 1), bodyRoll), quatFromAxisAngle(v3(1, 0, 0), torsoTilt));
+    const bodyFacing    = quatMultiply(facing, localTilt);
+    const idleAmount    = player.grounded ? 1 - Math.min(horizSpeed / MOVE_SPEED, 1) : 0;
+    const idleBob       = Math.sin(animTime * IDLE_BOB_RATE) * IDLE_BOB_AMP * idleAmount;
+
+
+    // legs
+    const hipY = groundY + 2 * CHAR_LEG_HALF_H;
+    [-1, 1].forEach((side, idx) => {
+        const swing         = Math.sin(phase + idx * Math.PI) * swingMag;
+        const legQuat       = quatMultiply(facing, quatFromAxisAngle(v3(1, 0, 0), swing));
+        const hipWorld      = vAdd(v3(pos.x, hipY, pos.z), quatRotateVec(facing, v3(side * CHAR_LEG_SPACING, 0, 0)));
+        const legCenter     = vAdd(hipWorld, quatRotateVec(legQuat, v3(0, -CHAR_LEG_HALF_H, 0)));
+
+        drawMeshTRS(capsuleGpu, legCenter, legQuat, v3(CHAR_LEG_R, CHAR_LEG_HALF_H, CHAR_LEG_R), viewProj, CHAR_COLOR, 1.0, PLAYER_TEX);
+    });
+
+
+    // body
+    const bodyY = groundY + 2 * CHAR_LEG_HALF_H + CHAR_BODY_HALF_H + idleBob;
+    drawMeshTRS(capsuleGpu, v3(pos.x, bodyY, pos.z), bodyFacing, v3(CHAR_BODY_R, CHAR_BODY_HALF_H, CHAR_BODY_R), viewProj, CHAR_COLOR, 1.0, PLAYER_TEX);
+
+    [-1, 1].forEach((side, idx) => {
+        const p = armPose[idx];
+        let targetSpread = side * ARM_SPREAD, targetSwing = 0;
+        if (player.grounded) {
+            targetSwing = Math.sin(phase + idx * Math.PI + Math.PI) * swingMag * ARM_WALK_SWING_SCALE;
+        }
+        else if (player.velocity.y > 0) {
+            if (side === 1) {
+                targetSwing = JUMP_UP_SWING;
+                targetSpread = side * ARM_SPREAD * JUMP_UP_SPREAD_SCALE;
+            }
+            else {
+                targetSwing = JUMP_TUCK_SWING;
+                targetSpread = side * ARM_SPREAD * JUMP_TUCK_SPREAD_SCALE;
+            }
+        }
+        else {
+            targetSwing = FALL_SWING + Math.sin(flapPhase + side * Math.PI) * FALL_FLAP_AMP;
+        }
+
+        const rate          = ease(ARM_POSE_RATE, dt);
+        p.spread            += (targetSpread - p.spread) * rate;
+        p.swing             += (targetSwing - p.swing) * rate;
+        const armTilt       = quatFromAxisAngle(v3(0, 0, 1), p.spread);
+        const armSwing      = quatFromAxisAngle(v3(1, 0, 0), p.swing);
+        const armQuat       = quatMultiply(bodyFacing, quatMultiply(armTilt, armSwing));
+        const shoulderLocal = v3(side * CHAR_BODY_R * SHOULDER_OUTSET, CHAR_BODY_HALF_H * 0.5, 0);
+        const shoulderWorld = vAdd(v3(pos.x, bodyY - 0.15, pos.z), quatRotateVec(bodyFacing, shoulderLocal));
+        const armCenter     = vAdd(shoulderWorld, quatRotateVec(armQuat, v3(0, -CHAR_ARM_HALF_H, 0)));
+
+        drawMeshTRS(capsuleGpu, armCenter, armQuat, v3(CHAR_ARM_R, CHAR_ARM_HALF_H, CHAR_ARM_R), viewProj, CHAR_COLOR, 1.0, PLAYER_TEX);
+    });
+
+
+
+    // eyes
+    [-1, 1].forEach(side => {
+        const eyeLocal = v3(side * 0.11, CHAR_BODY_HALF_H * 0.5, -CHAR_BODY_R * 0.95);
+        const eyeWorld = vAdd(v3(pos.x, bodyY + 0.1, pos.z), quatRotateVec(bodyFacing, eyeLocal));
+
+        drawMeshTRS(skyGpu, eyeWorld, quatIdentity(), v3(EYE_R, EYE_R, EYE_R), viewProj, EYE_COLOR);
+    });
+
+    // nose
+    const noseLocal = v3(0, CHAR_BODY_HALF_H * 0.3 - EYE_R * 1.4, -CHAR_BODY_R * 0.98);
+    const noseWorld = vAdd(v3(pos.x, bodyY + 0.1, pos.z), quatRotateVec(bodyFacing, noseLocal));
+
+    drawMeshTRS(skyGpu, noseWorld, quatIdentity(), v3(NOSE_R, NOSE_R, NOSE_R), viewProj, CHAR_COLOR);
+
+
+    // horn
+    const hornY     = groundY + 1.0 * CHAR_LEG_HALF_H + 2 * CHAR_BODY_HALF_H + CHAR_HORN_HALF_H + idleBob;
+    const hornQuat  = quatMultiply(bodyFacing, quatFromAxisAngle(v3(1, 0, 0), HORN_TILT));
+    const hornPos   = vAdd(v3(pos.x, hornY, pos.z), quatRotateVec(bodyFacing, HORN_OFFSET));
+
+    drawMeshTRS(coneGpu, hornPos, hornQuat, v3(CHAR_HORN_R, CHAR_HORN_HALF_H, CHAR_HORN_R), viewProj, CHAR_HORN_COLOR);
+}
+
+
+const
+    TRAIL_SAMPLE_DIST     = 0.3,
+    TRAIL_GRACE_POINTS    = 14,
+    TRAIL_KILL_RADIUS     = 0.45,
+    TRAIL_CUBE_HALF       = 0.12,
+    MAX_TRAIL_CUBES       = 1000;
+
+const trail = new Array(MAX_TRAIL_CUBES).fill(null);
+
+
+let
+    trailCount      = 0,
+    trailWriteIndex = 0,
+    lastTrailPoint  = null,
+    hasMoved        = false;
+
+
+function trailPointAt(i) {
+    if (trailCount < MAX_TRAIL_CUBES) return trail[i];
+    return trail[(trailWriteIndex + i) % MAX_TRAIL_CUBES];
+}
+
+
+function pushTrailPoint(p) {
+    trail[trailWriteIndex] = p;
+    trailWriteIndex = (trailWriteIndex + 1) % MAX_TRAIL_CUBES;
+    trailCount = Math.min(trailCount + 1, MAX_TRAIL_CUBES);
+}
+
+function closestPointOnSegment(p, a, b) {
+    const ab = vSub(b, a);
+    const abLenSq = vDot(ab, ab);
+
+    if (abLenSq < 1e-8) return a;
+
+    const t = clamp(vDot(vSub(p, a), ab) / abLenSq, 0, 1);
+    return vAdd(a, vScale(ab, t));
+}
+
+
+function hitsTrail(position) {
+    const lastCheckable = trailCount - TRAIL_GRACE_POINTS;
+    for (let i = 0; i < lastCheckable - 1; i++) {
+        const closest = closestPointOnSegment(position, trailPointAt(i), trailPointAt(i + 1));
+
+        if (vLen(vSub(position, closest)) < TRAIL_KILL_RADIUS) return true;
+    }
+    return false;
+}
+
+
+function updateTrail() {
+    if (!lastTrailPoint) {
+        lastTrailPoint = {
+            x: player.position.x,
+            y: player.position.y,
+            z: player.position.z
+        };
+
+        pushTrailPoint(lastTrailPoint);
+        return;
+    }
+
+    if (vLen(vSub(player.position, lastTrailPoint)) >= TRAIL_SAMPLE_DIST) {
+        lastTrailPoint = {
+            x: player.position.x,
+            y: player.position.y,
+            z: player.position.z
+        };
+
+        pushTrailPoint(lastTrailPoint);
+    }
+}
+
+function rainbowColor(t) {
+    return [
+        0.5 + 0.5 * Math.sin(t * 6.283),
+        0.5 + 0.5 * Math.sin(t * 6.283 + 2.094),
+        0.5 + 0.5 * Math.sin(t * 6.283 + 4.189),
+    ];
+}
+
+const
+    TREASURE_TIME_LIMIT     = 10,
+    TICK_MARKS              = [3, 2, 1],
+    TREASURE_RADIUS         = 0.6,
+    TREASURE_MAGNET_RADIUS  = 5.0,
+    TREASURE_MAGNET_SPEED   = 12.0,
+    HIGH_SCORE_KEY          = "super_unicorn_highscore",
+    BEACON_HALF_HEIGHT      = 12,
+    BEACON_HALF_WIDTH       = 0.35,
+    BEACON_COLOR            = [1.0, 0.95, 0.6],
+    BEACON_ALPHA            = 0.3,
+    MIN_TREASURE_SPAWN_DIST = 6;
+
+let
+    treasurePos     = null,
+    treasureTimer   = TREASURE_TIME_LIMIT,
+    score           = 0,
+    highScore       = parseInt(localStorage.getItem(HIGH_SCORE_KEY), 10) || 0,
+    lastTreasurePos = null;
+
+
+function pickNewTreasure() {
+
+    let next, tries = 0;
+
+    do {
+        next = GROUND_SPAWN_POINTS[(rnd(0, GROUND_SPAWN_POINTS.length)) | 0];
+        tries++;
+    }
+    while (lastTreasurePos && vLen(vSub(next, lastTreasurePos)) < MIN_TREASURE_SPAWN_DIST && tries < 20);
+
+    treasurePos     = next;
+    lastTreasurePos = next;
+    treasureTimer   = TREASURE_TIME_LIMIT;
+}
+
+
+function clearFieldForNextTreasure() {
+
+    score++;
+    sfx(SFX_GRAB);
+    spawnGrabBurst(treasurePos);
+
+    if (score > highScore) {
+        highScore = score;
+        localStorage.setItem(HIGH_SCORE_KEY, String(highScore));
+
+        if (!newHighScoreAnnounced) {
+            newHighScoreAnnounced = true;
+            newHighScoreTimer = NEW_HIGH_SCORE_DURATION;
+            sfx(SFX_HIGHSCORE);
+        }
+    }
+    pickNewTreasure();
+}
+
+
+const NEW_HIGH_SCORE_DURATION   = 2.5;
+let newHighScoreAnnounced       = false;
+let newHighScoreTimer           = 0;
+
+
+// =====================================================================
+// sounds and music
+// =====================================================================
+
+// ZZFX
+let zzfx, zzfxX, xV;
+
+function zfx() {
+    // ZzFX - Zuper Zmall Zound Zynth - Micro Edition
+    // MIT License - Copyright 2019 Frank Force - https://github.com/KilledByAPixel/ZzFX
+    xV = .3;
+    zzfx =
+    (p=1,k=.05,b=220,e=0,r=0,t=.1,q=0,D=1,u=0,y=0,v=0,z=0,l=0,E=0,A=0,F=0,c=0,w=1,m=
+    0,B=0,M=Math,R=44100,d=2*M.PI,G=u*=500*d/R/R,C=b*=(1-k+2*k*M.random(k=[]))*d/R,g
+    =0,H=0,a=0,n=1,I=0,J=0,f=0,x,h)=>{e=R*e+9;m*=R;r*=R;t*=R;c*=R;y*=500*d/R**3;A*=d
+    /R;v*=d/R;z*=R;l=R*l|0;for(h=e+m+r+t+c|0;a<h;k[a++]=f)++J%(100*F|0)||(f=q?1<q?2<
+    q?3<q?M.sin((g%d)**3):M.max(M.min(M.tan(g),1),-1):1-(2*g/d%2+2)%2:1-4*M.abs(M.
+    round(g/d)-g/d):M.sin(g),f=(l?1-B+B*M.sin(d*a/l):1)*(0<f?1:-1)*M.abs(f)**D*xV
+    *p*(a<e?a/e:a<e+m?1-(a-e)/m*(1-w):a<e+m+r?w:a<h-c?(h-a-c)/t*w:0),f=c?f/2+(c>a?0:
+    (a<h-c?1:(h-a)/c)*k[a-c|0]/2):f),x=(b+=u+=y)*M.cos(A*H++),g+=x-x*E*(1-1E9*(M.sin
+    (a)+1)%2),n&&++n>z&&(b+=v,C+=v,n=0),!l||++I%l||(b=C,u=G,n||=1);p=zzfxX.
+    createBuffer(1,h,R);p.getChannelData(0).set(k);b=zzfxX.createBufferSource();b.
+    buffer=p;b.connect(zzfxX.destination);b.start();return b};
+    zzfxX = new AudioContext;
+}
+
+
+
+const
+    SFX_JUMP        = 0,
+    SFX_GRAB        = 1,
+    SFX_DEATH       = 2,
+    SFX_TRAMPOLINE  = 3,
+    SFX_PINBALL     = 4,
+    SFX_HIGHSCORE   = 5,
+    SFX_KICK        = 6,
+    SFX_ACCENT      = 7,
+    SFX_BOOT        = 8,
+    SFX_FANFARE     = 9,
+    SFX_TICK        = 10;
+
+
+const ssf = [
+    [1.2, .1, 300, , .03, .08, , 1.4, 15],                                // JUMP
+    [1.3, .2, 1100, , .08, .42, 1, 1.6, , , 300, .05],                    // GRAB
+    [1.4, .3, 120, , .05, .3, 3, 1.2, -8, , , , , , , , .1],              // DEATH
+    [1.5, .2, 200, , .05, .2, , 1.8, 40],                                 // TRAMPOLINE
+    [1.3, .3, 150, , .03, .15, 2, 1.5, , , -60, .05],                     // PINBALL
+    [1.6, .1, 500, , .08, .25, 1, 1.7, , , 600, .1, .05, , , , , , , .3], // HIGHSCORE
+    [.9, .05, 90, , .02, .1, , 1.1],                                      // KICK
+    [.8, .05, 120, , .045, .05, 1, 1.3],                                  // ACCENT
+    [1.0, .05, 200, , .05, .1, , 1.3, 60],                                // BOOT
+    [1.7, .15, 400, , .1, .35, 1, 1.6, , , 500, .08, .05, , , , , .6, , .4],// FANFARE
+    [1.0, .05, 900, , .02, .05, , 1.9],                                   // TICK
+];
+
+
+
+function sfx(which) {
+    if (zzfx && document.hasFocus()) zzfx(...ssf[which]);
+}
+
+
+const MELODY_SCALE = [1, 1.1225, 1.2599, 1.1225, 1.4983, 1.2599, 1.6818, 1.4983, 2, 1.4983, 1.2599, 1.1225];
+let next = 0;
+
+function playMelodyNote() {
+    if (!(zzfx && document.hasFocus())) return;
+    const preset = ssf[SFX_ACCENT].slice();
+    const ratio = MELODY_SCALE[next];
+    next = (next + 1) % MELODY_SCALE.length;
+    preset[2] = (preset[2] || 260) * ratio;
+    zzfx(...preset);
+}
+
+let
+    mst = 0,
+    msc = 0;
+
+const MUSIC_STEP_TIME       = 0.22;
+const MELODY_EXTRA_CHANCE   = 0.4;
+
+const mgg = [1,0,2,0, 1,0,0,0, 1,0,2,2, 1,0,1,0, 1,0,2,0, 1,0,2,0, 1,0,2,2, 1,1,1,1];
+
+function msx(dt) {
+    mst += dt;
+    if (mst > MUSIC_STEP_TIME) {
+        mst -= MUSIC_STEP_TIME;
+        if (mgg[msc] === 1) sfx(SFX_KICK);
+        if (mgg[msc] === 2) playMelodyNote();
+        //else if (rnd(0, 1) < MELODY_EXTRA_CHANCE) playMelodyNote();
+        msc = (msc + 1) % mgg.length;
+    }
+}
+
+const GAME_STATE = { BOOT: 0, TITLE: 1, PLAYING: 2 };
+let gameState = GAME_STATE.BOOT;
+generateLevel();
+let runElapsed = 0; // seconds survived in the current run
+
+
+function beginGame() {
+    gameState = GAME_STATE.PLAYING;
+    resetRun();
+    sfx(SFX_FANFARE);
+}
+
+
+const
+    TITLE_CAM_DIST      = 10,
+    TITLE_CAM_HEIGHT    = 1.5,
+    TITLE_PAN_AMPLITUDE = 0.25,
+    TITLE_PAN_RATE      = 0.08;
+
+
+function titleCamera(t) {
+    const yaw = Math.PI + Math.sin(t * TITLE_PAN_RATE) * TITLE_PAN_AMPLITUDE;
+    return {
+        eye: v3(Math.sin(yaw) * TITLE_CAM_DIST, TITLE_CAM_HEIGHT, -Math.cos(yaw) * TITLE_CAM_DIST),
+        target: v3(0, 0, 0)
+    };
+}
+
+let titleTime = 0;
+
+const
+    CONFETTI_COUNT      = 40,
+    CONFETTI_SPREAD     = 22,
+    CONFETTI_HEIGHT     = 24,
+    CONFETTI_TOP        = 20,
+    CONFETTI_FALL_SPEED = 2.2,
+    CONFETTI_R          = 0.28,
+    GRAB_BURST_COUNT    = 20,
+    GRAB_BURST_LIFETIME = 1.5,
+    GRAB_BURST_SPEED    = 15.5,
+    GRAB_BURST_R        = 0.15;
+
+const confetti = [];
+let grabBurstParticles = []; // {pos, vel, life}
+
+for (let i = 0; i < CONFETTI_COUNT; i++) {
+    confetti.push({
+        x:      rnd(-CONFETTI_SPREAD, CONFETTI_SPREAD),
+        z:      rnd(-CONFETTI_SPREAD, CONFETTI_SPREAD),
+        seed:   rnd(0, CONFETTI_HEIGHT),
+        drift:  rnd(-1.5, 1.5),
+        hue:    rnd(0, 1),
+    });
+}
+
+function spawnGrabBurst(pos) {
+    for (let i = 0; i < GRAB_BURST_COUNT; i++) {
+        const angle = rnd(0, Math.PI * 2);
+        const upness = rnd(0.3, 1.0);
+        const speed = rnd(GRAB_BURST_SPEED * 0.5, GRAB_BURST_SPEED);
+        grabBurstParticles.push({
+            pos:    v3(pos.x, pos.y, pos.z),
+            vel:    v3(Math.cos(angle) * speed * (1 - upness), speed * upness + 1.5, Math.sin(angle) * speed * (1 - upness)),
+            life:   GRAB_BURST_LIFETIME,
+            hue:    rnd(0, 1),
+        });
+    }
+}
+
+function updateGrabBurst(dt) {
+    for (let i = grabBurstParticles.length - 1; i >= 0; i--) {
+        const p = grabBurstParticles[i];
+        p.vel.y += GRAVITY * 0.5 * dt;
+        p.pos = vAdd(p.pos, vScale(p.vel, dt));
+        p.life -= dt;
+        if (p.life <= 0) grabBurstParticles.splice(i, 1);
+    }
+}
+
+// =====================================================================
+// input
+// =====================================================================
+
+
+const keys = {};
+window.addEventListener("keydown", e => { keys[e.code] = true; });
+window.addEventListener("keyup",   e => { keys[e.code] = false; });
+
+let camYaw              = Math.PI;
+let camPitch            = 0.25;
+const MOUSE_SENS        = 0.0025;
+const PITCH_LIMIT       = 1.3;
+const PITCH_LIMIT_DOWN  = 0.4;
+let charFacingYaw       = camYaw;
+const FACING_TURN_RATE  = 10;
+
+
+function getCameraBasis() {
+    const forward = v3(Math.sin(camYaw), 0, -Math.cos(camYaw));
+    const right = v3(Math.cos(camYaw), 0, Math.sin(camYaw));
+    return { forward, right };
+}
+
+function getCameraEyeOffset(distance) {
+    const { forward } = getCameraBasis();
+    const cp = Math.cos(camPitch), sp = Math.sin(camPitch);
+    return v3(-forward.x * cp * distance, sp * distance, -forward.z * cp * distance);
+}
+
+
+canvas.addEventListener("click", () => {
+    if (gameState === GAME_STATE.BOOT) {
+        gameState = GAME_STATE.TITLE;
+        zfx();
+        sfx(SFX_BOOT);
+        canvas.requestPointerLock();
+        return;
+    }
+
+    if (gameState === GAME_STATE.TITLE) {
+        beginGame();
+        return;
+    }
+
+    canvas.requestPointerLock();
+});
+
+
+document.addEventListener("mousemove", e => {
+    if (document.pointerLockElement === canvas) {
+        camYaw += e.movementX * MOUSE_SENS;
+        camPitch = clamp(camPitch - e.movementY * -MOUSE_SENS, -PITCH_LIMIT_DOWN, PITCH_LIMIT);
+    }
+});
+
+
+window.addEventListener("keydown", e => {
+    if (e.code === "Enter" && gameState === GAME_STATE.TITLE) beginGame();
+});
+
+
+// =====================================================================
+// physics (the accumulator is in frame())
+// =====================================================================
+
+const   FIXED_DT    = 1 / 60;
+const   MAX_ACCUM   = 0.25;
+let     accumulator = 0;
+let     lastTime    = performance.now();
+let     animTime    = 0;
+
+function physicsStep(dt) {
+    if (gameState !== GAME_STATE.PLAYING) return;
+    if (deathHitStop > 0) return;
+    runElapsed += dt;
+    msx(dt);
+    updateGrabBurst(dt);
+    const { forward, right } = getCameraBasis();
+
+    let mx = 0, mz = 0;
+    if (keys["KeyW"] || keys["ArrowUp"])    { mx += forward.x; mz += forward.z; }
+    if (keys["KeyS"] || keys["ArrowDown"])  { mx -= forward.x; mz -= forward.z; }
+    if (keys["KeyD"] || keys["ArrowRight"]) { mx += right.x;   mz += right.z; }
+    if (keys["KeyA"] || keys["ArrowLeft"])  { mx -= right.x;   mz -= right.z; }
+    const mlen = Math.sqrt(mx*mx + mz*mz);
+    if (mlen > 1e-5) {
+        mx /= mlen; mz /= mlen;
+        charFacingYaw = lerpAngle(charFacingYaw, camYaw, ease(FACING_TURN_RATE, dt));
+        hasMoved = true;
+    }
+
+    let speed = MOVE_SPEED;
+    if (keys["ShiftLeft"] || keys["ShiftRight"]) speed *= PLAYER_RUN_MULTIPLIER;
+    player.velocity.x = mx * speed;
+    player.velocity.z = mz * speed;
+    player.velocity.y += GRAVITY * dt;
+
+    if (keys["Space"] && player.grounded) {
+        player.velocity.y = JUMP_SPEED;
+        player.grounded = false;
+        sfx(SFX_JUMP);
+    }
+
+    player.position.x += player.velocity.x * dt;
+    player.position.y += player.velocity.y * dt;
+    player.position.z += player.velocity.z * dt;
+
+    player.grounded = false;
+    bounceSfxCooldown -= dt;
+
+    for (const box of staticBoxes) {
+        const n = resolveSphereVsBox(player, box);
+        if (!n) continue;
+        if (box.type === "trampoline") {
+            player.velocity.y = TRAMPOLINE_SPEED;
+            if (bounceSfxCooldown <= 0) { sfx(SFX_TRAMPOLINE); bounceSfxCooldown = BOUNCE_SFX_COOLDOWN; }
+        }
+    }
+
+    if (hitsTrail(player.position)) {
+        triggerDeath("trail");
+        return;
+    }
+
+    if (hasMoved) {
+        updateTrail();
+    }
+
+    const prevTreasureTimer = treasureTimer;
+    treasureTimer -= dt;
+
+
+    for (const mark of TICK_MARKS) {
+        if (prevTreasureTimer > mark && treasureTimer <= mark) {
+            sfx(SFX_TICK);
+        }
+    }
+
+
+    if (treasureTimer <= 0) {
+        triggerDeath("timeout");
+        return;
+    }
+
+    const toPlayer      = vSub(player.position, treasurePos);
+    const distToPlayer  = vLen(toPlayer);
+
+    if (distToPlayer < TREASURE_MAGNET_RADIUS && distToPlayer > TREASURE_RADIUS * 0.5) {
+        const pull = Math.min(TREASURE_MAGNET_SPEED * dt, distToPlayer - TREASURE_RADIUS * 0.5);
+        treasurePos = vAdd(treasurePos, vScale(vNorm(toPlayer), pull));
+    }
+
+    if (distToPlayer < TREASURE_RADIUS) {
+        clearFieldForNextTreasure();
+    }
+
+    if (player.position.y < RESET_Y) triggerDeath("fall");
+}
+
+
+let projMatrix = mat4Identity();
+
+function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = innerWidth * dpr;
+    canvas.height = innerHeight * dpr;
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    projMatrix = mat4Perspective(80 * Math.PI / 180, canvas.width / canvas.height, 0.1, 200);
+}
+
+window.addEventListener("resize", resize);
+resize();
+
+const CAM_DIST          = 4.2;
+const CAM_TARGET_HEIGHT = 1.0;
+const SKY_RADIUS        = 150;
+let frames              = 0;
+let lastRenderTime      = performance.now();
+let camEyeCurrent       = v3(0, 5, 10), camTargetCurrent = v3(0, 0, 0);
+
+
+// =====================================================================
+// rendering
+// =====================================================================
+
+function render() {
+
+    const now       = performance.now();
+    const frameDt   = Math.min((now - lastRenderTime) / 1000, 0.1);
+    lastRenderTime  = now;
+
+    if (newHighScoreTimer > 0) {
+        newHighScoreTimer = Math.max(0, newHighScoreTimer - frameDt);
+    }
+
+    if (gameState === GAME_STATE.PLAYING && deathHitStop > 0) {
+        deathHitStop -= frameDt;
+        if (deathHitStop <= 0) {
+            deathHitStop = 0;
+            resetRun();
+        }
+    }
+    else if (gameState === GAME_STATE.PLAYING) {
+        animTime += frameDt;
+    }
+    else if (gameState === GAME_STATE.TITLE) {
+        titleTime += frameDt;
+    }
+
+    if (gameState === GAME_STATE.BOOT) {
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        updateUI();
+        return;
+    }
+
+
+    let eye, target;
+    if (gameState === GAME_STATE.PLAYING && deathHitStop > 0) {
+        const camRate = ease(DEATH_CAM_LERP_RATE, frameDt);
+        camEyeCurrent = vAdd(camEyeCurrent, vScale(vSub(deathCamEye, camEyeCurrent), camRate));
+        camTargetCurrent = vAdd(camTargetCurrent, vScale(vSub(deathCamTarget, camTargetCurrent), camRate));
+        eye = camEyeCurrent;
+        target = camTargetCurrent;
+    }
+    else if (gameState === GAME_STATE.TITLE) {
+        const cam = titleCamera(titleTime);
+        eye = cam.eye;
+        target = cam.target;
+    }
+    else {
+        target = vAdd(player.position, v3(0, CAM_TARGET_HEIGHT, 0));
+        eye = pushCameraOutOfGeometry(vAdd(target, getCameraEyeOffset(CAM_DIST)));
+        camEyeCurrent = eye;
+        camTargetCurrent = target;
+    }
+
+    const view = mat4LookAt(eye, target, v3(0, 1, 0));
+    const viewProj = mat4Multiply(projMatrix, view);
+
+    gl.clearColor(0.02, 0.02, 0.05, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.useProgram(prog);
+    gl.uniform3f(locLight, -0.4, -1.0, -0.3);
+    gl.uniform3f(locCamPos, eye.x, eye.y, eye.z);
+    gl.uniform3f(locShadowPos, player.position.x, player.position.y, player.position.z);
+    gl.uniform1f(locShadowRadius, SHADOW_RADIUS);
+    gl.uniform1f(locShadowHeightRange, SHADOW_HEIGHT_RANGE);
+    gl.uniform1f(locShadowStrength, gameState === GAME_STATE.PLAYING ? SHADOW_STRENGTH : 0.0);
+
+    gl.disable(gl.DEPTH_TEST);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, skyTex);
+    drawMeshTRS(skyGpu, eye, quatIdentity(), v3(SKY_RADIUS, SKY_RADIUS, SKY_RADIUS), viewProj, [1, 1, 1], 1.0, { uvOffset: [0, 0], uvScale: [1, 1], unlit: true });
+    gl.enable(gl.DEPTH_TEST);
+    gl.bindTexture(gl.TEXTURE_2D, atlasTex);
+
+    for (const box of staticBoxes) {
+        drawMeshTRS(roundedBoxGpu, v3(box.cx, box.cy, box.cz), box.orientation, v3(box.hx, box.hy, box.hz), viewProj, box.color, 1.0, { uvOffset: box.uvOffset, uvScale: box.uvScale, sideOnly: true, receiveShadow: true });
+    }
+
+    if (gameState === GAME_STATE.TITLE) {
+        for (const p of confetti) {
+            const y = CONFETTI_TOP - ((titleTime * CONFETTI_FALL_SPEED + p.seed) % CONFETTI_HEIGHT);
+            const x = p.x + Math.sin(titleTime * 0.5 + p.seed) * p.drift;
+            drawMeshTRS(skyGpu, v3(x, y, p.z), quatIdentity(), v3(CONFETTI_R, CONFETTI_R, CONFETTI_R), viewProj, rainbowColor(p.hue + titleTime * 0.1));
+        }
+    }
+
+    const scale = 1.15;
+    const trailScale = v3(TRAIL_CUBE_HALF * scale, TRAIL_CUBE_HALF * scale, TRAIL_CUBE_HALF * scale);
+    frames++;
+
+    const showGameplayProps = gameState === GAME_STATE.PLAYING;
+
+    if (showGameplayProps) {
+        for (let i = 0; i < trailCount; i++) {
+            let angle = quatFromAxisAngle(v3(0.5, 0.5, 0.5), (trailCount + frames / MAX_TRAIL_CUBES) * 6.28);
+            drawMeshTRS(boxGpu, trailPointAt(i), angle, trailScale, viewProj, rainbowColor(i * 0.04));
+        }
+        drawPlayer(player.position, charFacingYaw, viewProj, frameDt);
+    }
+
+    if (showGameplayProps && treasurePos) {
+        const bob = Math.sin(performance.now() * 0.003) * 0.15;
+        const spin = quatFromAxisAngle(v3(0, 1, 0), performance.now() * 0.0025);
+
+        drawMeshTRS(starGpu, vAdd(treasurePos, v3(0, bob, 0)), spin, v3(0.4, 0.4, 0.4), viewProj, [1.0, 0.85, 0.2]);
+        drawMeshTRS(boxGpu,
+            v3(treasurePos.x, treasurePos.y + BEACON_HALF_HEIGHT, treasurePos.z),
+            quatIdentity(),
+            v3(BEACON_HALF_WIDTH, BEACON_HALF_HEIGHT, BEACON_HALF_WIDTH),
+            viewProj, BEACON_COLOR, BEACON_ALPHA);
+    }
+
+    for (const p of grabBurstParticles) {
+        const alpha = p.life / GRAB_BURST_LIFETIME;
+        drawMeshTRS(skyGpu, p.pos, quatIdentity(), v3(GRAB_BURST_R, GRAB_BURST_R, GRAB_BURST_R), viewProj, rainbowColor(p.hue), alpha);
+    }
+
+    updateUI();
+}
+
+function updateUI() {
+    const boot      = gameState === GAME_STATE.BOOT;
+    const title     = gameState === GAME_STATE.TITLE;
+    const playing   = gameState === GAME_STATE.PLAYING;
+
+    elBoot.style.display    = boot      ? "" : "none";
+    elJp.style.display      = title     ? "" : "none";
+    elRomaji.style.display  = title     ? "" : "none";
+    elBegin.style.display   = title     ? "" : "none";
+    elHint.style.display    = playing   ? "" : "none";
+    elTimer.style.display   = playing   ? "" : "none";
+    elStar.style.display    = playing   ? "" : "none";
+    elHiScore.style.display = playing   ? "" : "none";
+
+    if (playing) {
+        elTimer.textContent = Math.max(0, treasureTimer).toFixed(1);
+        elStar.textContent  = `✩ ${score}`;
+        elHiScore.textContent = `HI-SCORE ${highScore}`;
+    }
+
+    elDeath.textContent = (playing && deathHitStop > 0) ? deathMessage : "";
+    elNewHi.textContent = (playing && newHighScoreTimer > 0) ? "NEW HIGH SCORE WOOHOO!" : "";
+}
+
+
+function frame(now) {
+    let dt      = (now - lastTime) / 1000;
+    lastTime    = now;
+    accumulator = Math.min(accumulator + dt, MAX_ACCUM);
+
+    while (accumulator >= FIXED_DT) {
+        physicsStep(FIXED_DT);
+        accumulator -= FIXED_DT;
+    }
+    render();
+    requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+
+</script>
+</body>
+</html>
